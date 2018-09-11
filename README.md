@@ -232,6 +232,13 @@ is equivalent to pushing using the URL path
 
     /metrics/job/foo/instance/1.2.3.4
 
+### TTL
+
+When a `PUT` or `POST` method is received with a `TTL` header, that value will
+be used as that metric groups TTL value. When that number of seconds has
+elapsed, and no metric push has been received, it will remove the associated
+entries.
+
 ### `PUT` method
 
 `PUT` is used to push a group of metrics. All metrics with the

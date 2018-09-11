@@ -14,12 +14,14 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +55,19 @@ func Push(
 	var ps httprouter.Params
 	var mtx sync.Mutex // Protects ps.
 
+	// Create the ttl manager.
+	ttl := NewTTL(ms)
+	go func() {
+		for {
+			ctx := context.Background()
+			if err := ttl.PurgeExpired(ctx); err != nil {
+				log.Debugf("Failed to purge expired entries: %v", err)
+			}
+
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
+
 	instrumentedHandlerFunc := prometheus.InstrumentHandlerFunc(
 		"push",
 		func(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +87,18 @@ func Push(
 				return
 			}
 			labels["job"] = job
+
+			ttlHeader := r.Header.Get("TTL")
+			if ttlHeader != "" {
+				ttlDuration, err := strconv.ParseInt(ttlHeader, 10, 64)
+				if err == nil {
+					expiresIn := time.Duration(ttlDuration) * time.Second
+					log.Debug("inserting new ttl managed entry")
+					if err := ttl.Beat(r.Context(), labels, expiresIn); err != nil {
+						log.Debugf("Failed to upsert the metrics group into the ttl manager: %v", err)
+					}
+				}
+			}
 
 			if replace {
 				ms.SubmitWriteRequest(storage.WriteRequest{
@@ -145,6 +172,19 @@ func LegacyPush(
 	var ps httprouter.Params
 	var mtx sync.Mutex // Protects ps.
 
+	// Create the ttl manager.
+	ttl := NewTTL(ms)
+	go func() {
+		for {
+			ctx := context.Background()
+			if err := ttl.PurgeExpired(ctx); err != nil {
+				log.Debugf("Failed to purge expired entries: %v", err)
+			}
+
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
+
 	instrumentedHandlerFunc := prometheus.InstrumentHandlerFunc(
 		"push",
 		func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +211,18 @@ func LegacyPush(
 					Labels:    labels,
 					Timestamp: time.Now(),
 				})
+			}
+
+			ttlHeader := r.Header.Get("TTL")
+			if ttlHeader != "" {
+				ttlDuration, err := strconv.ParseInt(ttlHeader, 10, 64)
+				if err == nil {
+					expiresIn := time.Duration(ttlDuration) * time.Second
+					log.Debug("inserting new ttl managed entry")
+					if err := ttl.Beat(r.Context(), labels, expiresIn); err != nil {
+						log.Debugf("Failed to upsert the metrics group into the ttl manager: %v", err)
+					}
+				}
 			}
 
 			var metricFamilies map[string]*dto.MetricFamily
